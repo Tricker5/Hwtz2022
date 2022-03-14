@@ -2,9 +2,9 @@
 
 #include <string>
 
-struct Client{
+struct Customer{
     public:
         std::string name;
         
-        Client(std::string name);
+        Customer(std::string name);
 };
