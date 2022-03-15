@@ -1,6 +1,6 @@
 #include "utils.h"
 
-std::vector<std::string> split(std::string str_line, char c_split){
+std::vector<std::string> split(const std::string &str_line, const char &c_split){
     std::vector<std::string> str_vec;
     std::string str_temp;
     for(auto c : str_line){
@@ -19,4 +19,8 @@ std::vector<std::string> split(std::string str_line, char c_split){
         str_temp = "";
     }
     return str_vec;
+}
+
+bool cmpDemandPairVec(const std::pair<std::string, int> &a, const std::pair<std::string, int> &b){
+    return a.second > b.second;
 }
