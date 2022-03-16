@@ -248,6 +248,7 @@ def get_input_data():
 class OutputAnalyser():
     def __init__(self) -> None:
         self._author = getoutput('echo $USER').strip() == 'daniel'
+        self._curr_read_line = ''
         self.server_history_bandwidth = []
         self.max = len(cname)
         self.curr_time_step = -1
@@ -268,7 +269,7 @@ class OutputAnalyser():
         self._fig_id_list = []
         self._fig_json_list = []
     
-    def _analyse_server_history(self):
+    def _analyse_server_history_and_plot(self):
         conn_matrix = self.server_contains_client_idx.sum(axis=0) > 0  # server, client
         for s_idx, one_server_to_client in enumerate(conn_matrix):
             if one_server_to_client.sum() == 0: continue
@@ -283,13 +284,20 @@ class OutputAnalyser():
         self.calc_score_1()
         if self._author:
             self.calc_score_2()
-        self.plot_manager = PlotManager()
-        self._analyse_server_history()
         if self._author:
             score_msg = f'<p>score1: {self.score1}</p> <p>score2: {self.score2}</p>'
         else:
             score_msg = f'<p>score: {self.score1}</p>'
-        self.plot_manager.show_webpage(score_msg)
+        inp = input('generate plot through webpage? y/[n] (default is n):')
+        if inp.strip().lower() == 'n' or inp.strip() == '':
+            return
+        elif inp.strip().lower() == 'y':
+            self.plot_manager = PlotManager()
+            self._analyse_server_history_and_plot()
+            self.plot_manager.show_webpage(score_msg)
+            return 
+        else:
+            print('input error, will not plot figure')
 
 
     def dispatch_server(self, c_idx: int, s_idx: int, res: int):
@@ -297,10 +305,14 @@ class OutputAnalyser():
         self.server_contains_client_res[self.curr_time_step, s_idx, c_idx] += res
         self.server_used_bandwidth[s_idx] += res
         if self.server_used_bandwidth[s_idx] > bandwidth[s_idx]:
-            err_print(f'bandwidth overflow at server {sname[s_idx]} \t {self.count}th line time: {time_label[self.count]}')
-        if qos[s_idx, c_idx] > qos_lim:
-            err_print(  f'qos larger than qos limit \t edge node: {sname[s_idx]} \t client node: {cname[c_idx]} \t' \
-                        f'{self.count}th line time: {time_label[self.count]}')
+            err_print(  f'bandwidth overflow at server {sname[s_idx]} (index: {s_idx}) \n'\
+                        f'{self.count}th line \t time: {time_label[self.curr_time_step]} (index: {self.curr_time_step})',
+                        self._curr_read_line)
+        if qos[s_idx, c_idx] >= qos_lim:
+            err_print(  f'qos larger or equal than qos limit \n'\
+                        f'server edge node: {sname[s_idx]} (index: {s_idx}) \t client node: {cname[c_idx]} (index: {c_idx}) \t' \
+                        f'{self.count}th line time: {time_label[self.curr_time_step]} (index: {self.curr_time_step})', 
+                        self._curr_read_line)
     
     def read_one_line(self, line: str):
         # client node process
@@ -319,6 +331,9 @@ class OutputAnalyser():
             self.count += 1
         # server node process
         if remain.strip() == '':
+            if client_demand[self.curr_time_step, c_idx] != 0:
+                err_print(f'bandwidth of {cname[c_idx]} is not 0, but did not dispatch edge server')
+            self._check_time_step_finished()
             return
         dispatchs = remain[1: -1].split(',')
         if len(dispatchs) == 1:
@@ -342,7 +357,7 @@ class OutputAnalyser():
             err_print(f'bandwidth accumulation of {cname[c_idx]} is not satisfied', line)
         self._check_time_step_finished()
     
-    def _process_server_res(self, c_idx, server_name: str, res_str: str, line: str):
+    def _process_server_res(self, c_idx: int, server_name: str, res_str: str, line: str):
         s_idx = sname_map.get(server_name) # s_idx = sname_map[s]
         if s_idx is None:
             err_print(f'not exists edge node: {server_name}', line)
@@ -361,6 +376,7 @@ class OutputAnalyser():
         with open(output_file_name) as f:
             lines = f.read().splitlines()
         for l in lines:
+            self._curr_read_line = l
             self.read_one_line(l)
         if self.curr_time_step != len(time_label):
             err_print('not all time step is printed')
@@ -373,6 +389,7 @@ class OutputAnalyser():
         server_history = np.array(self.server_history_bandwidth)
         server_history.sort(axis=0)
         score = server_history[idx].sum()
+        print('largest: \n', server_history[-1], '\n')
         self.score1 = score
         if self._author:
             print(f'final score 1: {score}')

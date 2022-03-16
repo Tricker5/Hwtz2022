@@ -56,7 +56,8 @@ void AllocMgr::initCustomerMap(const string &csv_qos){
         for(auto i = 1; i < qos_vec.size(); ++i){
             string cstm_name = c_n_vec[i];
             int qos = stoi(qos_vec[i]);
-            if(qos <= this->qos_constr){
+            // 必须小于时延
+            if(qos < this->qos_constr){
                 // 当满足 qos 限制时，每个客户记录自己可用的边缘节点
                 this->map_customer[cstm_name]->map_usable_site.emplace(site_name, 0);
                 // 边缘节点统计自身可用的“频数”
@@ -88,6 +89,7 @@ void AllocMgr::solveDemand(const string &csv_demand){
     getline(if_demand, str_line);
     vector<string> cstm_vec = split(str_line, ',');
     vector<unordered_map<string, unordered_map<string, int>>> final_slt;
+    // 开始处理所有时刻的请求
     while(getline(if_demand, str_line)){
         vector<string> demand_vec = split(str_line, ','); 
         unordered_map<string, unordered_map<string, int>> slt_per_dm = this->solveOneDemand(demand_vec, cstm_vec);
@@ -104,53 +106,163 @@ void AllocMgr::solveDemand(const string &csv_demand){
  */
 unordered_map<string, unordered_map<string, int>> AllocMgr::solveOneDemand(const vector<string> &demand_vec, const vector<string> &cstm_vec){
     string m_time = demand_vec[0];
-    vector<pair<string, int>> dm_pair_vec;
+    // 首先对客户需求排序，优先对平均需求（需求除以可用节点数）进行分配
+    
+    vector<pair<string, int>> dm_pair_vec; // 将请求和客户名绑定成 pair 便于排序
+    unordered_map<string, int> dm_map; // 将 demand_vec 转化成 map 将用于映射
+
     for(auto i = 1; i < demand_vec.size(); ++i){
-        pair<string, int> dm_pair = {cstm_vec[i], stoi(demand_vec[i])};
+        string c_name = cstm_vec[i];
+        int demand = stoi(demand_vec[i]);
+        // 暂存总需求
+        pair<string, int> dm_pair = {c_name, demand / this->map_customer.at(c_name)->map_usable_site.bucket_count()};
         dm_pair_vec.push_back(dm_pair);
+        dm_map.emplace(c_name, demand);
     }
 
-    // 首先对客户需求排序，优先对大需求进行分配
-    sort(dm_pair_vec.begin(), dm_pair_vec.end(), cmpDemandPairVec);
-    
-    // 最后请求的分配方案
-    unordered_map<string, unordered_map<string, int>> slt_per_dm;
-    // 对于处理一条请求中的每个客户请求
-    for(auto dm_pair : dm_pair_vec){
-        string c_name = dm_pair.first;
-        Customer* cstm = this->map_customer[c_name];
-        int total_dm_bw = dm_pair.second;
-        int rest_dm_bw = total_dm_bw;
-        unordered_map<string, int> slt_per_cstm;
-        for(auto site_fq_pair : cstm->map_usable_site){
-            string s_name = site_fq_pair.first;
-            int fq = site_fq_pair.second;
-            int alloc_bw = total_dm_bw * fq / cstm->total_site_fq;
-            // 判断是否能成功分配，若不能，进行后续处理
-            if(!this->map_site.at(s_name)->allocBw(alloc_bw)){
-                // 暂时认为必然能全分配进去
-                cout << "this time cannot alloc: " << endl;
-            }
-            rest_dm_bw -= alloc_bw;
-            slt_per_cstm.emplace(s_name, alloc_bw);
-        }
-        // 上述分配最后一次分配没有完全分配完成，随机取出一个来分
-        auto site_fq_pair = *(cstm->map_usable_site.begin());
-        string s_name = site_fq_pair.first;
-        int alloc_bw = rest_dm_bw;
-        // 判断是否能成功分配，若不能，进行后续处理
-        if(!this->map_site.at(s_name)->allocBw(alloc_bw)){
-            // 暂时认为必然能全分配进去
-            cout << "this time cannot alloc: " << endl;
-        }
-        rest_dm_bw -= alloc_bw;
-        slt_per_cstm.at(s_name) += alloc_bw;
-        slt_per_dm.emplace(c_name, slt_per_cstm);
+    // 从大到小排序
+    sort(dm_pair_vec.begin(), dm_pair_vec.end(), biggerStrIntPair);
+    // 将 dm_pair_vec 中存的平均需求还原为总需求
+    for(auto &dm_pair : dm_pair_vec){
+        dm_pair.second = dm_map.at(dm_pair.first);
     }
     
+    // 该条请求的分配方案
+    unordered_map<string, unordered_map<string, int>> slt_per_dm;
+    // 拷贝一个节点状态表
+    unordered_map<string, Site*> map_site_state = this->map_site;
+
+
+    // 为了保证客户请求必然满足，回溯地去处理每个客户请求
+    if(!dm_pair_vec.empty()){
+        if(!this->solveOneCstmDm(dm_pair_vec, 0, this->map_site, slt_per_dm)){
+            // 要是分配失败，打印个log
+            cout << "均衡大法失败！！！" << endl;
+        }
+    }
+        
     return slt_per_dm;
     
 }
+
+
+bool AllocMgr::solveOneCstmDm(const vector<pair<string, int>> &dm_pair_vec, const int dm_pair_idx, unordered_map<string, Site*> map_site_state, unordered_map<string, unordered_map<string, int>> &slt_per_dm){
+    // 首先解析当前回溯的客户请求
+    pair<string, int> dm_pair = dm_pair_vec[dm_pair_idx];
+    string c_name = dm_pair.first;
+    Customer* cstm = this->map_customer.at(c_name);
+    int total_dm_bw = dm_pair.second;
+    int curr_dm_bw = total_dm_bw;
+    unordered_map<string, int> slt_per_cstm;
+    
+    // 拷贝节点状态表
+    unordered_map<string, Site*> map_cur_site_state = map_site_state;
+
+
+    // 首先判断当前可用节点是否有充足裕量, 并使用 vector 存储便于排序
+    int usable_bw = 0;
+    vector<pair<string, int>> vec_usable_site_pair;
+    for(auto s_pair : cstm->map_usable_site){
+        string s_name = s_pair.first;
+        int rest_bw = map_cur_site_state.at(s_name)->rest_bw;
+        usable_bw += rest_bw;
+        vec_usable_site_pair.push_back({s_name, rest_bw});
+    }
+    int vusp_size = vec_usable_site_pair.size();
+    // 没有充足裕量则返回上一层，进行重分配
+    if(usable_bw < total_dm_bw){
+        return false;
+    }
+
+    // ============== 使用“均衡”大法！！！ ==================
+
+    // 首先对可用节点的裕量进行从大到小排序
+    sort(vec_usable_site_pair.begin(), vec_usable_site_pair.end(), biggerStrIntPair);
+
+    // 对裕量进行均衡, 可用节点只有1个则将所有请求放在改节点上
+    if(vusp_size == 1){
+        string s_name = vec_usable_site_pair[0].first;
+        map_cur_site_state.at(s_name)->allocBw(curr_dm_bw);
+        curr_dm_bw = 0;
+        slt_per_cstm[s_name] += curr_dm_bw;
+    }else{
+        int target_s_idx = 1;
+        vector<string> balance_s_vec = {vec_usable_site_pair[0].first}; // 一起向目标均衡点靠近的成长队列
+        string target_s_name = vec_usable_site_pair[1].first; // 目标均衡节点
+        int target_rest_bw = map_cur_site_state.at(target_s_name)->rest_bw; // 目标裕量
+
+        // 当目前的剩余请求足以用来均衡所有的成长节点时，执行共同成长
+        while(curr_dm_bw >= balance_s_vec.size()){
+            // 判断当前离目标的距离
+            int dis = map_cur_site_state.at(balance_s_vec[0])->rest_bw - target_rest_bw;
+            // 若已逼近目标
+            if(dis == 0){
+                // 判断是否有下一个逼近目标, 若有，则将当前目标点加入成长队列，更新目标，否则终止共同成长
+                if(target_s_idx + 1 < vusp_size){
+                    balance_s_vec.push_back(target_s_name);
+                    target_s_name = vec_usable_site_pair[++target_s_idx].first;
+                    target_rest_bw = map_cur_site_state.at(target_s_name)->rest_bw;
+                    continue;
+                }else{
+                    break;
+                }
+            }
+            int avg_bw;
+            if(curr_dm_bw < dis * balance_s_vec.size()){
+                // 小于距离之和，则留出部分余数
+                avg_bw = curr_dm_bw / balance_s_vec.size();
+            }else{
+                // 否则直接填满距离
+                avg_bw = dis;
+            }
+            // 共同成长，向目标逼近
+            for(string balance_s : balance_s_vec){
+                map_cur_site_state.at(balance_s)->allocBw(avg_bw);
+                curr_dm_bw -= avg_bw;
+                slt_per_cstm[balance_s] += avg_bw;
+            }          
+            
+        }
+    }
+
+
+    // 共同成长后，当前剩余请求有三种状态，0，小于可用队列个数，或者还剩超级多
+    // 若剩超级多，继续雨露均沾，分到它比可用队列个数小
+    if(curr_dm_bw >= vusp_size){
+        int avg_dm_bw = curr_dm_bw / vusp_size;
+        for(auto s_pair : vec_usable_site_pair){
+            string s_name = s_pair.first;
+            map_cur_site_state.at(s_name)->allocBw(avg_dm_bw);
+            curr_dm_bw -= avg_dm_bw;
+            slt_per_cstm[s_name] += avg_dm_bw;
+        }
+    }
+    // 此时剩余请求应该只剩小于可用队列个数，将剩余的分配给后面的节点
+    for(int i = vusp_size - curr_dm_bw; i < vusp_size; ++i){
+        string s_name = vec_usable_site_pair[i].first;
+        map_cur_site_state.at(s_name)->allocBw(1);
+        --curr_dm_bw;
+        slt_per_cstm[s_name] += 1;
+    }
+    
+
+    // 开始分配下一个客户
+    if(dm_pair_idx + 1 == dm_pair_vec.size()){
+        // 最后一层则直接返回
+        slt_per_dm.emplace(c_name, slt_per_cstm);
+        return true;
+    }else if(! this->solveOneCstmDm(dm_pair_vec, dm_pair_idx + 1, map_cur_site_state, slt_per_dm)){
+        // 下层分配失败，开始重分配本层的分配情况 暂时不考虑重分配
+        return false;
+    }else{
+        // 下层分配成功，返回
+        slt_per_dm.emplace(c_name, slt_per_cstm);
+        return true;
+    }
+    
+}
+
+
 
 /**
  * @brief 当处理完一次需求后对带宽进行重置

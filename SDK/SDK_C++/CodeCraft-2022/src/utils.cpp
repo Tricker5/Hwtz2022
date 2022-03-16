@@ -21,6 +21,6 @@ vector<string> split(const string &str_line, const char &c_split){
     return str_vec;
 }
 
-bool cmpDemandPairVec(const pair<string, int> &a, const pair<string, int> &b){
+bool biggerStrIntPair(const pair<string, int> &a, const pair<string, int> &b){
     return a.second > b.second;
 }
