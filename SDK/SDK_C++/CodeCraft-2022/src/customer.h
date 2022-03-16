@@ -4,11 +4,13 @@
 #include <unordered_set>
 #include <unordered_map>
 
+using namespace std;
+
 struct Customer{
     public:
-        std::string name;
-        std::unordered_map<std::string, int> map_usable_site;
+        string name;
+        unordered_map<string, int> map_usable_site;
         int total_site_fq;
         
-        Customer(std::string name);
+        Customer(string name);
 };
