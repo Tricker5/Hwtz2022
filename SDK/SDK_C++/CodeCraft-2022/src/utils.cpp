@@ -21,6 +21,10 @@ vector<string> split(const string &str_line, const char &c_split){
     return str_vec;
 }
 
-bool biggerStrIntPair(const pair<string, int> &a, const pair<string, int> &b){
+bool biggerPair(const pair<string, int> &a, const pair<string, int> &b){
     return a.second > b.second;
+}
+
+bool smallerPair(const pair<string, int> &a, const pair<string, int> &b){
+    return a.second < b.second;
 }

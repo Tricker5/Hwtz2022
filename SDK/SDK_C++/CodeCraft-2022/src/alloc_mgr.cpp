@@ -59,7 +59,7 @@ void AllocMgr::initCustomerMap(const string &csv_qos){
             // 必须小于时延
             if(qos < this->qos_constr){
                 // 当满足 qos 限制时，每个客户记录自己可用的边缘节点
-                this->map_customer[cstm_name]->map_usable_site.emplace(site_name, 0);
+                this->map_customer[cstm_name]->vec_usable_site_fq.push_back({site_name, 0});
                 // 边缘节点统计自身可用的“频数”
                 this->map_site[site_name]->usable_fq += 1;
             }
@@ -68,12 +68,13 @@ void AllocMgr::initCustomerMap(const string &csv_qos){
     // 统计每个客户可用节点的频数
     for(auto cstm_pair : this->map_customer){
         Customer* cstm = cstm_pair.second;
-        for(auto &site_fq_pair : cstm->map_usable_site){
+        for(auto &site_fq_pair : cstm->vec_usable_site_fq){
             int fq = this->map_site.at(site_fq_pair.first)->usable_fq;
             // 每个可用节点的频数加到客户的信息中，便于分配权重
             site_fq_pair.second += fq;
             cstm->total_site_fq += fq;
         }
+        sort(cstm->vec_usable_site_fq.begin(), cstm->vec_usable_site_fq.end(), smallerPair);
     }
     if_qos.close();
 }
@@ -114,14 +115,15 @@ unordered_map<string, unordered_map<string, int>> AllocMgr::solveOneDemand(const
     for(auto i = 1; i < demand_vec.size(); ++i){
         string c_name = cstm_vec[i];
         int demand = stoi(demand_vec[i]);
-        // 暂存总需求
-        pair<string, int> dm_pair = {c_name, demand / this->map_customer.at(c_name)->map_usable_site.bucket_count()};
+        // 取平均需求
+        pair<string, int> dm_pair = {c_name, demand / this->map_customer.at(c_name)->vec_usable_site_fq.size()};
         dm_pair_vec.push_back(dm_pair);
+        // 暂存总需求
         dm_map.emplace(c_name, demand);
     }
 
     // 从大到小排序
-    sort(dm_pair_vec.begin(), dm_pair_vec.end(), biggerStrIntPair);
+    sort(dm_pair_vec.begin(), dm_pair_vec.end(), biggerPair);
     // 将 dm_pair_vec 中存的平均需求还原为总需求
     for(auto &dm_pair : dm_pair_vec){
         dm_pair.second = dm_map.at(dm_pair.first);
@@ -162,7 +164,7 @@ bool AllocMgr::solveOneCstmDm(const vector<pair<string, int>> &dm_pair_vec, cons
     // 首先判断当前可用节点是否有充足裕量, 并使用 vector 存储便于排序
     int usable_bw = 0;
     vector<pair<string, int>> vec_usable_site_pair;
-    for(auto s_pair : cstm->map_usable_site){
+    for(auto s_pair : cstm->vec_usable_site_fq){
         string s_name = s_pair.first;
         int rest_bw = map_cur_site_state.at(s_name)->rest_bw;
         usable_bw += rest_bw;
@@ -177,7 +179,7 @@ bool AllocMgr::solveOneCstmDm(const vector<pair<string, int>> &dm_pair_vec, cons
     // ============== 使用“均衡”大法！！！ ==================
 
     // 首先对可用节点的裕量进行从大到小排序
-    sort(vec_usable_site_pair.begin(), vec_usable_site_pair.end(), biggerStrIntPair);
+    sort(vec_usable_site_pair.begin(), vec_usable_site_pair.end(), biggerPair);
 
     // 对裕量进行均衡, 可用节点只有1个则将所有请求放在改节点上
     if(vusp_size == 1){
