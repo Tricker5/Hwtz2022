@@ -6,6 +6,7 @@
 #include <ostream>
 #include <vector>
 #include <algorithm>
+#include <cmath>
 
 #include "utils.h"
 #include "site.h"
@@ -31,6 +32,7 @@ struct AllocMgr{
         Demands preProDemands(const Demands &dms);
         Solutions solveDemands(const Demands &dms);
         bool solveOneCstmDm(const Demands &dms, const size_t dm_pair_idx, unordered_map<string, Site*> map_site_state, Solutions &slt_per_dm);
+        void balanceDemands(vector<Site*> &vec_usable_site, int &curr_dm_bw, unordered_map<string, int> &slt_per_cstm);
         void resetSite();
         void outputSolutions(const vector<Solutions> &final_slt);
 };
