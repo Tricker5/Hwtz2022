@@ -21,10 +21,14 @@ vector<string> split(const string &str_line, const char &c_split){
     return str_vec;
 }
 
-bool biggerPair(const pair<string, int> &a, const pair<string, int> &b){
+bool biggerStrInt(const pair<string, int> &a, const pair<string, int> &b){
     return a.second > b.second;
 }
 
-bool smallerPair(const pair<string, int> &a, const pair<string, int> &b){
+bool biggerIdxInt(const pair<size_t, int> &a, const pair<size_t, int> &b){
+    return a.second > b.second;
+}
+
+bool smallerStrInt(const pair<string, int> &a, const pair<string, int> &b){
     return a.second < b.second;
 }

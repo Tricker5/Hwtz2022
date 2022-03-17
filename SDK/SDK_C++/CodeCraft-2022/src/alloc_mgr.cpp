@@ -45,7 +45,7 @@ void AllocMgr::initCustomerMap(const string &csv_qos){
     getline(if_qos, str_line);
     // 先处理中 qos.csv 中的第一行，含有 customer 的名字信息
     vector<string> c_n_vec = split(str_line, ',');
-    for(auto i = 1; i < c_n_vec.size(); ++i){
+    for(size_t i = 1; i < c_n_vec.size(); ++i){
         Customer* cstm = new Customer(c_n_vec[i]);
         this->map_customer.emplace(c_n_vec[i], cstm);
     }
@@ -53,7 +53,7 @@ void AllocMgr::initCustomerMap(const string &csv_qos){
     while(getline(if_qos, str_line)){
         vector<string> qos_vec = split(str_line, ',');
         string site_name = qos_vec[0];
-        for(auto i = 1; i < qos_vec.size(); ++i){
+        for(size_t i = 1; i < qos_vec.size(); ++i){
             string cstm_name = c_n_vec[i];
             int qos = stoi(qos_vec[i]);
             // 必须小于时延
@@ -74,7 +74,7 @@ void AllocMgr::initCustomerMap(const string &csv_qos){
             site_fq_pair.second += fq;
             cstm->total_site_fq += fq;
         }
-        sort(cstm->vec_usable_site_fq.begin(), cstm->vec_usable_site_fq.end(), smallerPair);
+        sort(cstm->vec_usable_site_fq.begin(), cstm->vec_usable_site_fq.end(), smallerStrInt);
     }
     if_qos.close();
 }
@@ -83,77 +83,110 @@ void AllocMgr::initCustomerMap(const string &csv_qos){
  * @brief 
  * 处理所有请求
  */
-void AllocMgr::solveDemand(const string &csv_demand){
+void AllocMgr::solveAllDemands(const string &csv_demand){
     ifstream if_demand(csv_demand);
     string str_line;
     // 先处理第一行 customer 名字的信息
     getline(if_demand, str_line);
     vector<string> cstm_vec = split(str_line, ',');
-    vector<unordered_map<string, unordered_map<string, int>>> final_slt;
-    // 开始处理所有时刻的请求
+    size_t dm_idx = 0;
+    // Trick!!! 将所有的请求都存入这个 vector
+    vector<Demands> vec_dms;
+    // 使用 pair 绑定请求之和以及请求在 vector 中原本的位置，用于排序
+    vector<pair<size_t, int>> vec_idx_dm_sum;
+
+    // 读取所有请求
     while(getline(if_demand, str_line)){
-        vector<string> demand_vec = split(str_line, ','); 
-        unordered_map<string, unordered_map<string, int>> slt_per_dm = this->solveOneDemand(demand_vec, cstm_vec);
-        this->resetSite();
-        final_slt.push_back(slt_per_dm);   
+        vector<string> str_dms_vec = split(str_line, ',');
+        // 将每条请求与对应的客户名绑定
+        Demands dms(cstm_vec.size() - 1);
+        int dm_sum = 0; // 计算请求之和
+        for(size_t i = 1; i < str_dms_vec.size(); ++i){
+            int dm_bw = stoi(str_dms_vec[i]);
+            dms.at(i - 1).first = cstm_vec[i];
+            dms.at(i - 1).second = dm_bw;
+            dm_sum += dm_bw;
+        }
+        // 存入 idx 和请求之和
+        vec_dms.push_back(dms);
+        vec_idx_dm_sum.push_back({dm_idx++, dm_sum});  
     }
     if_demand.close();
-    this->outputSolution(final_slt);
+
+    // 根据请求之和开始排序
+    sort(vec_idx_dm_sum.begin(), vec_idx_dm_sum.end(), biggerIdxInt);
+
+    size_t size_all_dms = vec_dms.size();
+
+    vector<Solutions> final_slt(size_all_dms);
+    // 开始处理所有时刻的请求
+    for(auto dm_sum : vec_idx_dm_sum){
+        size_t idx = dm_sum.first;
+        Demands dms = this->preProDemands(vec_dms.at(idx));
+        final_slt.at(idx) = this->solveDemands(dms);
+        this->resetSite();
+    } 
+    
+    this->outputSolutions(final_slt);
+}
+
+/**
+ * @brief 
+ * 预处理请求
+ */
+Demands AllocMgr::preProDemands(const Demands &dms){
+    // 首先对客户需求排序，优先对平均需求（需求除以可用节点数）进行分配
+    size_t dms_size = dms.size();
+    vector<pair<size_t, int>> dm_vec_for_sort(dms_size); // 将请求和原本请求的idx绑定成 pair 便于排序
+    Demands sorted_dms(dms_size);
+
+    for(size_t i = 0; i < dms_size; ++i){
+        int dm_bw = dms[i].second;
+        // 取平均需求
+        pair<size_t, int> dm_pair = {i, dm_bw / this->map_customer.at(dms[i].first)->vec_usable_site_fq.size()};
+        dm_vec_for_sort[i] = dm_pair;
+    }
+
+    // 从大到小排序
+    sort(dm_vec_for_sort.begin(), dm_vec_for_sort.end(), biggerIdxInt);
+    for(size_t i = 0; i < dms_size; ++i){
+        sorted_dms[i] = dms[dm_vec_for_sort[i].first];
+    }
+    return sorted_dms;
+
 }
 
 /**
  * @brief 
  * 处理一条请求
  */
-unordered_map<string, unordered_map<string, int>> AllocMgr::solveOneDemand(const vector<string> &demand_vec, const vector<string> &cstm_vec){
-    string m_time = demand_vec[0];
-    // 首先对客户需求排序，优先对平均需求（需求除以可用节点数）进行分配
-    
-    vector<pair<string, int>> dm_pair_vec; // 将请求和客户名绑定成 pair 便于排序
-    unordered_map<string, int> dm_map; // 将 demand_vec 转化成 map 将用于映射
+Solutions AllocMgr::solveDemands(const Demands &dms){
 
-    for(auto i = 1; i < demand_vec.size(); ++i){
-        string c_name = cstm_vec[i];
-        int demand = stoi(demand_vec[i]);
-        // 取平均需求
-        pair<string, int> dm_pair = {c_name, demand / this->map_customer.at(c_name)->vec_usable_site_fq.size()};
-        dm_pair_vec.push_back(dm_pair);
-        // 暂存总需求
-        dm_map.emplace(c_name, demand);
-    }
-
-    // 从大到小排序
-    sort(dm_pair_vec.begin(), dm_pair_vec.end(), biggerPair);
-    // 将 dm_pair_vec 中存的平均需求还原为总需求
-    for(auto &dm_pair : dm_pair_vec){
-        dm_pair.second = dm_map.at(dm_pair.first);
-    }
-    
     // 该条请求的分配方案
-    unordered_map<string, unordered_map<string, int>> slt_per_dm;
+    Solutions slts;
     // 拷贝一个节点状态表
     unordered_map<string, Site*> map_site_state = this->map_site;
 
 
     // 为了保证客户请求必然满足，回溯地去处理每个客户请求
-    if(!dm_pair_vec.empty()){
-        if(!this->solveOneCstmDm(dm_pair_vec, 0, this->map_site, slt_per_dm)){
+    if(!dms.empty()){
+        if(!this->solveOneCstmDm(dms, 0, this->map_site, slts)){
             // 要是分配失败，打印个log
             cout << "均衡大法失败！！！" << endl;
         }
     }
         
-    return slt_per_dm;
+    return slts;
     
 }
 
 
-bool AllocMgr::solveOneCstmDm(const vector<pair<string, int>> &dm_pair_vec, const int dm_pair_idx, unordered_map<string, Site*> map_site_state, unordered_map<string, unordered_map<string, int>> &slt_per_dm){
+bool AllocMgr::solveOneCstmDm(const Demands &dms, const size_t dm_idx, unordered_map<string, Site*> map_site_state, Solutions &slts){
     // 首先解析当前回溯的客户请求
-    pair<string, int> dm_pair = dm_pair_vec[dm_pair_idx];
-    string c_name = dm_pair.first;
+    pair<string, int> dm = dms[dm_idx];
+    string c_name = dm.first;
     Customer* cstm = this->map_customer.at(c_name);
-    int total_dm_bw = dm_pair.second;
+    int total_dm_bw = dm.second;
     int curr_dm_bw = total_dm_bw;
     unordered_map<string, int> slt_per_cstm;
     
@@ -179,7 +212,7 @@ bool AllocMgr::solveOneCstmDm(const vector<pair<string, int>> &dm_pair_vec, cons
     // ============== 使用“均衡”大法！！！ ==================
 
     // 首先对可用节点的裕量进行从大到小排序
-    sort(vec_usable_site_pair.begin(), vec_usable_site_pair.end(), biggerPair);
+    sort(vec_usable_site_pair.begin(), vec_usable_site_pair.end(), biggerStrInt);
 
     // 对裕量进行均衡, 可用节点只有1个则将所有请求放在改节点上
     if(vusp_size == 1){
@@ -194,7 +227,7 @@ bool AllocMgr::solveOneCstmDm(const vector<pair<string, int>> &dm_pair_vec, cons
         int target_rest_bw = map_cur_site_state.at(target_s_name)->rest_bw; // 目标裕量
 
         // 当目前的剩余请求足以用来均衡所有的成长节点时，执行共同成长
-        while(curr_dm_bw >= balance_s_vec.size()){
+        while(curr_dm_bw >= int(balance_s_vec.size())){
             // 判断当前离目标的距离
             int dis = map_cur_site_state.at(balance_s_vec[0])->rest_bw - target_rest_bw;
             // 若已逼近目标
@@ -210,7 +243,7 @@ bool AllocMgr::solveOneCstmDm(const vector<pair<string, int>> &dm_pair_vec, cons
                 }
             }
             int avg_bw;
-            if(curr_dm_bw < dis * balance_s_vec.size()){
+            if(curr_dm_bw < int(dis * balance_s_vec.size())){
                 // 小于距离之和，则留出部分余数
                 avg_bw = curr_dm_bw / balance_s_vec.size();
             }else{
@@ -249,16 +282,16 @@ bool AllocMgr::solveOneCstmDm(const vector<pair<string, int>> &dm_pair_vec, cons
     
 
     // 开始分配下一个客户
-    if(dm_pair_idx + 1 == dm_pair_vec.size()){
+    if(dm_idx + 1 == dms.size()){
         // 最后一层则直接返回
-        slt_per_dm.emplace(c_name, slt_per_cstm);
+        slts.emplace(c_name, slt_per_cstm);
         return true;
-    }else if(! this->solveOneCstmDm(dm_pair_vec, dm_pair_idx + 1, map_cur_site_state, slt_per_dm)){
+    }else if(! this->solveOneCstmDm(dms, dm_idx + 1, map_cur_site_state, slts)){
         // 下层分配失败，开始重分配本层的分配情况 暂时不考虑重分配
         return false;
     }else{
         // 下层分配成功，返回
-        slt_per_dm.emplace(c_name, slt_per_cstm);
+        slts.emplace(c_name, slt_per_cstm);
         return true;
     }
     
@@ -281,7 +314,7 @@ void AllocMgr::resetSite(){
  * @brief 输出解决方案
  * 
  */
-void AllocMgr::outputSolution(const vector<unordered_map<string, unordered_map<string, int>>> &final_slt){
+void AllocMgr::outputSolutions(const vector<Solutions> &final_slt){
     ofstream of_slt(output_path + "/solution.txt");
     string output_str;
     for(auto slt_per_time : final_slt){
@@ -289,11 +322,11 @@ void AllocMgr::outputSolution(const vector<unordered_map<string, unordered_map<s
             string c_name = slt_per_cstm.first;
             output_str += c_name;
             output_str += ":";
-            for(auto slt : slt_per_cstm.second){
+            for(auto slt_s : slt_per_cstm.second){
                 output_str += "<";
-                output_str += slt.first;
+                output_str += slt_s.first;
                 output_str += ",";
-                output_str += to_string(slt.second);
+                output_str += to_string(slt_s.second);
                 output_str += ">";
                 output_str += ",";
             }

@@ -9,6 +9,8 @@ using namespace std;
 
 // 用于分割字符串
 vector<string> split(const string &str_line, const char &c_split);
-// 对 dm_pair_vec 进行降序排序
-bool biggerPair(const pair<string, int> &a, const pair<string, int> &b);
-bool smallerPair(const pair<string, int> &a, const pair<string, int> &b);
+
+// 一些用于sort排序的函数
+bool biggerStrInt(const pair<string, int> &a, const pair<string, int> &b);
+bool biggerIdxInt(const pair<size_t, int> &a, const pair<size_t, int> &b);
+bool smallerStrInt(const pair<string, int> &a, const pair<string, int> &b);

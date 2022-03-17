@@ -2,7 +2,7 @@
 
 #include <string>
 
-// #define TEST
+#define TEST
 
 using namespace std;
 

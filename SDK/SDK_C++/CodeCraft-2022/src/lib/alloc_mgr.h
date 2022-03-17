@@ -14,6 +14,9 @@
 
 using namespace std;
 
+typedef unordered_map<string, unordered_map<string, int>> Solutions;
+typedef vector<pair<string, int>> Demands;
+
 struct AllocMgr{
     public:
         int qos_constr;
@@ -24,11 +27,12 @@ struct AllocMgr{
         void initQosConstraint(const string &ini_cfg);
         void initSiteMap(const string &csv_site);
         void initCustomerMap(const string &csv_qos);
-        void solveDemand(const string &csv_demand);
-        unordered_map<string, unordered_map<string, int>> solveOneDemand(const vector<string> &demand_vec, const vector<string> &cstm_vec);
-        bool solveOneCstmDm(const vector<pair<string, int>> &dm_pair_vec, const int dm_pair_idx, unordered_map<string, Site*> map_site_state, unordered_map<string, unordered_map<string, int>> &slt_per_dm);
+        void solveAllDemands(const string &csv_demand);
+        Demands preProDemands(const Demands &dms);
+        Solutions solveDemands(const Demands &dms);
+        bool solveOneCstmDm(const Demands &dms, const size_t dm_pair_idx, unordered_map<string, Site*> map_site_state, Solutions &slt_per_dm);
         void resetSite();
-        void outputSolution(const vector<unordered_map<string, unordered_map<string, int>>> &final_slt);
+        void outputSolutions(const vector<Solutions> &final_slt);
 };
 
 
