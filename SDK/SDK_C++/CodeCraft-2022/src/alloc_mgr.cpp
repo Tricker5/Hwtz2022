@@ -69,7 +69,7 @@ void AllocMgr::initCustomerMap(const string &csv_qos){
             if(qos < this->qos_constr){
                 // 当满足 qos 限制时，每个客户记录自己可用的边缘节点
                 this->map_customer[cstm_name]->vec_usable_site_name.push_back(site_name);
-                // 边缘节点统计自身可用的“频数”
+                // 边缘节点统计自身可用时在列表中出现的频数
                 this->map_site[site_name]->usable_fq += 1;
             }
         }
@@ -159,28 +159,7 @@ Demands AllocMgr::preProDemands(const Demands &dms){
         sorted_dms[i] = dms[dm_vec_for_sort[i].first];
     }
 
-
-    // 对可超频的节点数进行排序
-    for(size_t i = 0; i < dms_size; ++i){
-        int count = 0;
-        for(const auto &s_name: this->map_customer.at(dms[i].first)->vec_usable_site_name){
-            if(this->map_site.at(s_name)->over_times != 0){
-                ++count;
-            }
-        }
-        // 获得可超频节点数
-        dm_vec_for_sort[i] = {i, count};
-    }
-
-    // 从小到大排序
-    sort(dm_vec_for_sort.begin(), dm_vec_for_sort.end(), smallerIdxInt);
-    for(size_t i = 0; i < dms_size; ++i){
-        sorted_dms[i] = dms[dm_vec_for_sort[i].first];
-    }
-
-
     return sorted_dms;
-
 }
 
 /**
