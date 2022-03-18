@@ -68,22 +68,11 @@ void AllocMgr::initCustomerMap(const string &csv_qos){
             // 必须小于时延
             if(qos < this->qos_constr){
                 // 当满足 qos 限制时，每个客户记录自己可用的边缘节点
-                this->map_customer[cstm_name]->vec_usable_site_fq.push_back({site_name, 0});
+                this->map_customer[cstm_name]->vec_usable_site_name.push_back(site_name);
                 // 边缘节点统计自身可用的“频数”
                 this->map_site[site_name]->usable_fq += 1;
             }
         }
-    }
-    // 统计每个客户可用节点的频数
-    for(auto cstm_pair : this->map_customer){
-        Customer* cstm = cstm_pair.second;
-        for(auto &site_fq_pair : cstm->vec_usable_site_fq){
-            int fq = this->map_site.at(site_fq_pair.first)->usable_fq;
-            // 每个可用节点的频数加到客户的信息中，便于分配权重
-            site_fq_pair.second += fq;
-            cstm->total_site_fq += fq;
-        }
-        sort(cstm->vec_usable_site_fq.begin(), cstm->vec_usable_site_fq.end(), smallerStrInt);
     }
     if_qos.close();
 }
@@ -158,7 +147,7 @@ Demands AllocMgr::preProDemands(const Demands &dms){
     for(size_t i = 0; i < dms_size; ++i){
         int dm_bw = dms[i].second;
         // 取平均需求
-        pair<size_t, int> dm_pair = {i, dm_bw / this->map_customer.at(dms[i].first)->vec_usable_site_fq.size()};
+        pair<size_t, int> dm_pair = {i, dm_bw / this->map_customer.at(dms[i].first)->vec_usable_site_name.size()};
         // // 取总需求
         // pair<size_t, int> dm_pair = {i, dm_bw};
         dm_vec_for_sort[i] = dm_pair;
@@ -174,8 +163,8 @@ Demands AllocMgr::preProDemands(const Demands &dms){
     // 对可超频的节点数进行排序
     for(size_t i = 0; i < dms_size; ++i){
         int count = 0;
-        for(auto site_pair : this->map_customer.at(dms[i].first)->vec_usable_site_fq){
-            if(this->map_site.at(site_pair.first)->over_times != 0){
+        for(const auto &s_name: this->map_customer.at(dms[i].first)->vec_usable_site_name){
+            if(this->map_site.at(s_name)->over_times != 0){
                 ++count;
             }
         }
@@ -223,8 +212,8 @@ bool AllocMgr::solveOneCstmDm(const Demands &dms, const size_t dm_idx, Solutions
 
     // 首先判断当前可用节点是否有充足裕量
     int usable_bw = 0;
-    for(const auto &s_pair : cstm->vec_usable_site_fq){
-        usable_bw += this->map_site.at(s_pair.first)->rest_bw;
+    for(const auto &s_name : cstm->vec_usable_site_name){
+        usable_bw += this->map_site.at(s_name)->rest_bw;
     }
     // 没有充足裕量则返回上一层，进行重分配
     if(usable_bw < total_dm_bw){
@@ -274,8 +263,8 @@ unordered_map<string, int> AllocMgr::reAllocCstmDm(int total_dm_bw, Customer* cs
     vector<Site*> vec_usable_site; // 所有当前可用节点
     vector<Site*> vec_is_over_site; // 当前正在 overflow 的节点
     vector<Site*> vec_can_over_site; // 依然有 overflow 机会的节点
-    for(const auto &s_pair : cstm->vec_usable_site_fq){
-        Site* site = this->map_site.at(s_pair.first);
+    for(const auto &s_name : cstm->vec_usable_site_name){
+        Site* site = this->map_site.at(s_name);
         vec_usable_site.push_back(site);
         if(site->is_over){
             vec_is_over_site.push_back(site);

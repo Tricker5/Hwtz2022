@@ -10,7 +10,7 @@ using namespace std;
 struct Customer{
     public:
         string name;
-        vector<pair<string, int>> vec_usable_site_fq;
+        vector<string> vec_usable_site_name;
         int total_site_fq;
         
         Customer(string name);
