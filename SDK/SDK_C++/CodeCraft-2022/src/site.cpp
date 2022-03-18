@@ -35,6 +35,21 @@ void Site::reset(){
     this->closeOverflow();
 }
 
+SiteState Site::getState(){
+    SiteState s_state;
+    s_state.name = this->name;
+    s_state.rest_bw = this->rest_bw;
+    s_state.over_times = this->over_times;
+    s_state.is_over = this->is_over;
+    return s_state;
+}
+
+void Site::setState(SiteState s_state){
+    this->rest_bw = s_state.rest_bw;
+    this->over_times = s_state.over_times;
+    this->is_over = s_state.is_over;
+}
+
 bool biggerRestBw(const Site* a, const Site* b){
     return a->rest_bw > b->rest_bw;
 }

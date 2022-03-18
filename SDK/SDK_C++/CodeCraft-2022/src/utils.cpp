@@ -25,10 +25,14 @@ bool biggerStrInt(const pair<string, int> &a, const pair<string, int> &b){
     return a.second > b.second;
 }
 
+bool smallerStrInt(const pair<string, int> &a, const pair<string, int> &b){
+    return a.second < b.second;
+}
+
 bool biggerIdxInt(const pair<size_t, int> &a, const pair<size_t, int> &b){
     return a.second > b.second;
 }
 
-bool smallerStrInt(const pair<string, int> &a, const pair<string, int> &b){
+bool smallerIdxInt(const pair<size_t, int> &a, const pair<size_t, int> &b){
     return a.second < b.second;
 }

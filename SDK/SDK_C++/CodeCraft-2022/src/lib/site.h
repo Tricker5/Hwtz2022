@@ -4,6 +4,13 @@
 
 using namespace std;
 
+struct SiteState{
+    string name;
+    int rest_bw;
+    int over_times;
+    bool is_over;
+};
+
 struct Site{
     public:
         string name;
@@ -17,7 +24,12 @@ struct Site{
         bool allocBw(int bw);
         void openOverflow();
         void closeOverflow();
+        SiteState getState();
+        void setState(SiteState s_state);
         void reset();
 };
+
+
+
 
 bool biggerRestBw(const Site* a, const Site* b);
