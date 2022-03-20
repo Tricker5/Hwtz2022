@@ -180,7 +180,10 @@ Solutions AllocMgr::solveDemands(const Demands &dms){
     return slts;
 }
 
-
+/**
+ * @brief 
+ * 回溯地去解决一整条请求，并给出相应分配方案
+ */
 bool AllocMgr::solveOneCstmDm(const Demands &dms, const size_t dm_idx, Solutions &slts){
     // 首先解析当前回溯的客户请求
     pair<string, int> dm = dms[dm_idx];
@@ -236,9 +239,13 @@ bool AllocMgr::solveOneCstmDm(const Demands &dms, const size_t dm_idx, Solutions
 
 }
 
+/**
+ * @brief 
+ * 解决客户请求的具体细节
+ */
 unordered_map<string, int> AllocMgr::reAllocCstmDm(int total_dm_bw, Customer* cstm, double load_percent){
     int curr_dm_bw = total_dm_bw;
-    // 首先判断当前可用节点是否有充足裕量, 并使用 vector 存储便于排序
+    // 首先判断当前可用节点是否有充足裕量
     vector<Site*> vec_usable_site; // 所有当前可用节点
     vector<Site*> vec_is_over_site; // 当前正在 overflow 的节点
     vector<Site*> vec_can_over_site; // 依然有 overflow 机会的节点
@@ -254,7 +261,7 @@ unordered_map<string, int> AllocMgr::reAllocCstmDm(int total_dm_bw, Customer* cs
     unordered_map<string, int> slt_per_cstm;
     // ============== 使用超频大法！！！ ==================
     if(curr_dm_bw != 0){
-        this->overDemands(vec_is_over_site, vec_can_over_site, curr_dm_bw, slt_per_cstm, load_percent);
+        this->overDemands(vec_is_over_site, vec_can_over_site, total_dm_bw,  curr_dm_bw, slt_per_cstm, load_percent);
     }
 
     // ============== 使用“均衡”大法！！！ ==================
@@ -270,7 +277,7 @@ unordered_map<string, int> AllocMgr::reAllocCstmDm(int total_dm_bw, Customer* cs
  * @brief 
  * 对每个节点进行超频
  */
-void AllocMgr::overDemands(vector<Site*> &vec_is_over_site, vector<Site*> &vec_can_over_site, int &curr_dm_bw, unordered_map<string, int> &slt_per_cstm, double load_percent){
+void AllocMgr::overDemands(vector<Site*> &vec_is_over_site, vector<Site*> &vec_can_over_site, const int total_dm_bw, int &curr_dm_bw, unordered_map<string, int> &slt_per_cstm, double load_percent){
     // 遍历当前正在超频的节点，暂时使用尽量直接把请求全分配给超频的策略
     for(auto site : vec_is_over_site){
         // 可用空间只能到达设定的超频状态
@@ -285,8 +292,8 @@ void AllocMgr::overDemands(vector<Site*> &vec_is_over_site, vector<Site*> &vec_c
         }
     }
     
-    // 若有剩余请求，则开启其他可超频节点
-    if(curr_dm_bw != 0){
+    // 若有剩余请求，且剩余请求达到总请求的一定值，则开启其他可超频节点
+    if(curr_dm_bw != 0 && curr_dm_bw > total_dm_bw * 0.9){
         for(auto site : vec_can_over_site){
             site->openOverflow();
             // 可用空间只能到达设定的超频状态
