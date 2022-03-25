@@ -30,14 +30,14 @@ struct AllocMgr{
         void initSiteMap(const string &csv_site);
         void initCustomerMap(const string &csv_qos);
         void solveAllDemands(const string &csv_demand);
-        Demands preProDemands(const Demands &dms);
-        Solutions solveDemands(const Demands &dms);
+        Solutions solveDemands(Demands &dms);
+        Demands preProDemands(Demands &dms);
         bool solveOneCstmDm(const Demands &dms, const size_t dm_idx, Solutions &slts);
         unordered_map<string, int> reAllocCstmDm(const int total_dm_bw, Customer* cstm, double load_percent, bool is_new_over);
         void overDemands(vector<Site*> &vec_is_over_site, vector<Site*> &vec_can_over_site, const int total_dm_bw, int &curr_dm_bw, unordered_map<string, int> &slt_per_cstm, double load_percent);
         void balanceDemands(vector<Site*> &vec_usable_site, int &curr_dm_bw, unordered_map<string, int> &slt_per_cstm);
         void resetSite();
-        void allocBw(int bw, int &curr_dm_bw, Site* site, unordered_map<string, int> &slt_per_cstm);
+        void allocBwPerCstm(int bw, int &curr_dm_bw, Site* site, unordered_map<string, int> &slt_per_cstm);
         void outputSolutions(const vector<Solutions> &final_slt);
 };
 

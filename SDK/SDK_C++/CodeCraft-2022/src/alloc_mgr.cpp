@@ -71,6 +71,8 @@ void AllocMgr::initCustomerMap(const string &csv_qos){
                 this->map_customer[cstm_name]->vec_usable_site_name.push_back(site_name);
                 // 边缘节点统计自身可用时在列表中出现的频数
                 this->map_site[site_name]->usable_fq += 1;
+                // 每个节点记录自己可支持的用户
+                this->map_site[site_name]->vec_usable_cstm_name.push_back(cstm_name);
             }
         }
     }
@@ -126,40 +128,116 @@ void AllocMgr::solveAllDemands(const string &csv_demand){
     // 开始处理所有时刻的请求
     for(auto dm_sum : vec_idx_dm_sum){
         size_t idx = dm_sum.first;
-        Demands dms = this->preProDemands(vec_dms.at(idx));
-        final_slt.at(idx) = this->solveDemands(dms);
+        final_slt.at(idx) = this->solveDemands(vec_dms.at(idx));
         this->resetSite();
     } 
     
     this->outputSolutions(final_slt);
 }
 
+
+/**
+ * @brief 
+ * 处理一条请求
+ */
+Solutions AllocMgr::solveDemands(Demands &dms){
+    // 该条请求的分配方案
+    Solutions slts;
+
+    if(dms.empty()){
+        return slts;
+    }
+
+    // 拷贝一份当前请求状态
+    dms = preProDemands(dms);
+    unordered_map<string, int> curr_dms;
+    for(auto dm : dms){
+        curr_dms.emplace(dm);
+    }
+
+    // 记录当前所有site状态
+    vector<SiteState> vec_site_state(this->map_site.size());
+    // 随便记录一个site用于排序
+    vector<Site*> v_site(this->map_site.size());
+    size_t vss_idx = 0;
+    for(auto site_pair : this->map_site){
+        vec_site_state[vss_idx] = site_pair.second->getState();
+        v_site[vss_idx] = site_pair.second;
+        ++vss_idx;
+    }
+
+    // 以可支持的客户数从小到大排序
+    sort(v_site.begin(), v_site.end(), biggerUCSize);
+
+    
+    // 遍历当前拥有超频机会的节点
+    for(auto site : v_site){
+        if(site->over_times > 0){
+            // 统计其可支持客户的所有需求
+            int dm_bw_count = 0;
+            for(const string &c_name : site->vec_usable_cstm_name){
+                dm_bw_count += curr_dms[c_name];
+            }
+            // 若大于某个阈值，那么直接超频
+            if(dm_bw_count >= site->total_bw){
+                site->is_over = true;
+                for(const string &c_name : site->vec_usable_cstm_name){
+                    if(site->rest_bw != 0 && curr_dms[c_name] != 0){
+                        int bw;
+                        if(site->rest_bw < curr_dms[c_name]){
+                            bw = site->rest_bw;
+                        }else{
+                            bw = curr_dms[c_name];
+                        }
+                        site->allocBw(bw);
+                        curr_dms[c_name] -= bw;
+                        slts[c_name][site->name] += bw;
+                    }
+                }
+            }
+        }
+    }
+
+    
+    Demands temp_dms;
+    for(auto &dm : curr_dms){
+        temp_dms.push_back(dm);
+    }
+
+    // 为了保证客户请求必然满足，回溯地去处理每个客户请求
+    if(!this->solveOneCstmDm(temp_dms, 0, slts)){
+        // 要是分配失败，打印个log
+        cout << "分配失败！！！" << endl;
+    }
+        
+    return slts;
+}
+
 /**
  * @brief 
  * 预处理请求
  */
-Demands AllocMgr::preProDemands(const Demands &dms){
+Demands AllocMgr::preProDemands(Demands &dms){
     // 首先对客户需求排序
     size_t dms_size = dms.size();
     vector<pair<size_t, int>> vec_idx_pair(dms_size); // 将请求和原本请求的 idx 绑定成 pair 便于排序
     Demands temp_dms; // 中间量
-    Demands sorted_dms(dms_size);
 
     // 第一次排序，取需求这个量
     temp_dms = dms;
     for(size_t i = 0; i < dms_size; ++i){
         int dm_bw = temp_dms[i].second;
-        // 取平均需求
-        pair<size_t, int> dm_pair = {i, dm_bw / this->map_customer.at(temp_dms[i].first)->vec_usable_site_name.size()};
-        // // 取总需求
-        // pair<size_t, int> dm_pair = {i, dm_bw};
+        // // 取平均需求
+        // pair<size_t, int> dm_pair = {i, dm_bw / this->map_customer.at(temp_dms[i].first)->vec_usable_site_name.size()};
+        // 取总需求
+        pair<size_t, int> dm_pair = {i, dm_bw};
         vec_idx_pair[i] = dm_pair;
     }
 
     // 从大到小排序
     sort(vec_idx_pair.begin(), vec_idx_pair.end(), biggerIdxInt);
     for(size_t i = 0; i < dms_size; ++i){
-        sorted_dms[i] = dms[vec_idx_pair[i].first];
+        dms[i] = temp_dms[vec_idx_pair[i].first];
     }
 
     // // 第二次排序， 取剩余可用的超频节点
@@ -180,26 +258,10 @@ Demands AllocMgr::preProDemands(const Demands &dms){
     // }
 
 
-    return sorted_dms;
+    return dms;
 }
 
-/**
- * @brief 
- * 处理一条请求
- */
-Solutions AllocMgr::solveDemands(const Demands &dms){
-    // 该条请求的分配方案
-    Solutions slts;
-    // 为了保证客户请求必然满足，回溯地去处理每个客户请求
-    if(!dms.empty()){
-        if(!this->solveOneCstmDm(dms, 0, slts)){
-            // 要是分配失败，打印个log
-            cout << "分配失败！！！" << endl;
-        }
-    }
-        
-    return slts;
-}
+
 
 /**
  * @brief 
@@ -240,8 +302,11 @@ bool AllocMgr::solveOneCstmDm(const Demands &dms, const size_t dm_idx, Solutions
     slt_per_cstm = this->reAllocCstmDm(total_dm_bw, cstm, load_percent, is_new_over);
 
     // 最后一层则直接返回
-    if(dm_idx + 1 == dms.size()){    
-        slts.emplace(c_name, slt_per_cstm);
+    if(dm_idx + 1 == dms.size()){
+        for(auto slt_pair : slt_per_cstm){
+            slts[c_name][slt_pair.first] += slt_pair.second;
+        }    
+        
         return true;
     }
 
@@ -260,7 +325,9 @@ bool AllocMgr::solveOneCstmDm(const Demands &dms, const size_t dm_idx, Solutions
         slt_per_cstm = this->reAllocCstmDm(total_dm_bw, cstm, load_percent, dm_idx);
     }
     // 下层分配成功，返回
-    slts.emplace(c_name, slt_per_cstm);
+    for(auto slt_pair : slt_per_cstm){
+        slts[c_name][slt_pair.first] += slt_pair.second;
+    }    
     return true;
 
 }
@@ -310,31 +377,31 @@ void AllocMgr::overDemands(vector<Site*> &vec_is_over_site, vector<Site*> &vec_c
         int load_bw = site->rest_bw - int(site->total_bw * (1 - load_percent));
         if(load_bw > 0){
             if(load_bw < curr_dm_bw){
-                this->allocBw(load_bw, curr_dm_bw, site, slt_per_cstm);
+                this->allocBwPerCstm(load_bw, curr_dm_bw, site, slt_per_cstm);
             }else{
-                this->allocBw(curr_dm_bw, curr_dm_bw, site, slt_per_cstm);
+                this->allocBwPerCstm(curr_dm_bw, curr_dm_bw, site, slt_per_cstm);
                 break;
             }
         }
     }
     
-    // 若有剩余请求，且剩余请求达到总请求的一定值，则开启其他可超频节点
-    if(curr_dm_bw != 0 && curr_dm_bw > total_dm_bw * 0.85){
-        for(auto site : vec_can_over_site){
-            site->openOverflow();
-            // 可用空间只能到达设定的超频状态
-            int load_bw = site->rest_bw - int(site->total_bw * (1 - load_percent));
-            if(load_bw > 0){
-                if(load_bw < curr_dm_bw){
-                    this->allocBw(load_bw, curr_dm_bw, site, slt_per_cstm);
-                }else{
-                    this->allocBw(curr_dm_bw, curr_dm_bw, site, slt_per_cstm);
-                    break;
-                }
-            }
+    // // 若有剩余请求，且剩余请求达到总请求的一定值，则开启其他可超频节点
+    // if(curr_dm_bw != 0 && curr_dm_bw > total_dm_bw * 0.85){
+    //     for(auto site : vec_can_over_site){
+    //         site->openOverflow();
+    //         // 可用空间只能到达设定的超频状态
+    //         int load_bw = site->rest_bw - int(site->total_bw * (1 - load_percent));
+    //         if(load_bw > 0){
+    //             if(load_bw < curr_dm_bw){
+    //                 this->allocBwPerCstm(load_bw, curr_dm_bw, site, slt_per_cstm);
+    //             }else{
+    //                 this->allocBwPerCstm(curr_dm_bw, curr_dm_bw, site, slt_per_cstm);
+    //                 break;
+    //             }
+    //         }
             
-        }
-    }
+    //     }
+    // }
 }
 
 
@@ -350,9 +417,7 @@ void AllocMgr::balanceDemands(vector<Site*> &vec_usable_site, int &curr_dm_bw, u
     // 对裕量进行均衡, 可用节点只有1个则将所有请求放在改节点上
     if(vus_size == 1){
         Site* site = vec_usable_site[0];
-        site->allocBw(curr_dm_bw);
-        curr_dm_bw = 0;
-        slt_per_cstm[site->name] += curr_dm_bw;
+        this->allocBwPerCstm(curr_dm_bw, curr_dm_bw, site, slt_per_cstm);
     }else{
         int target_s_idx = 1;
         vector<Site*> balance_s_vec = {vec_usable_site[0]}; // 一起向目标均衡点靠近的成长队列
@@ -383,9 +448,7 @@ void AllocMgr::balanceDemands(vector<Site*> &vec_usable_site, int &curr_dm_bw, u
             }
             // 共同成长，向目标逼近
             for(Site* site : balance_s_vec){
-                site->allocBw(avg_bw);
-                curr_dm_bw -= avg_bw;
-                slt_per_cstm[site->name] += avg_bw;
+                this->allocBwPerCstm(avg_bw, curr_dm_bw, site, slt_per_cstm);
             }          
             
         }
@@ -397,7 +460,7 @@ void AllocMgr::balanceDemands(vector<Site*> &vec_usable_site, int &curr_dm_bw, u
     if(curr_dm_bw >= vus_size){
         int avg_dm_bw = curr_dm_bw / vus_size;
         for(Site* site: vec_usable_site){
-            this->allocBw(avg_dm_bw, curr_dm_bw, site, slt_per_cstm);
+            this->allocBwPerCstm(avg_dm_bw, curr_dm_bw, site, slt_per_cstm);
         }
     }
     // 此时剩余请求应该只剩小于可用队列个数，将剩余的分配给前面的节点（后面的可能满了）
@@ -405,7 +468,7 @@ void AllocMgr::balanceDemands(vector<Site*> &vec_usable_site, int &curr_dm_bw, u
         if(curr_dm_bw == 0){
             break;
         }
-        this->allocBw(1, curr_dm_bw, vec_usable_site[i], slt_per_cstm);
+        this->allocBwPerCstm(1, curr_dm_bw, vec_usable_site[i], slt_per_cstm);
     }
 
 }
@@ -414,7 +477,7 @@ void AllocMgr::balanceDemands(vector<Site*> &vec_usable_site, int &curr_dm_bw, u
  * @brief 
  * 分配带宽并将其记录到解决方案
  */
-void AllocMgr::allocBw(int bw, int &curr_dm_bw, Site* site, unordered_map<string, int> &slt_per_cstm){
+void AllocMgr::allocBwPerCstm(int bw, int &curr_dm_bw, Site* site, unordered_map<string, int> &slt_per_cstm){
     site->allocBw(bw);
     curr_dm_bw -= bw;
     slt_per_cstm[site->name] += bw;
