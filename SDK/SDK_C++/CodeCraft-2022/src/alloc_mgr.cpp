@@ -69,10 +69,10 @@ void AllocMgr::initCustomerMap(const string &csv_qos){
             if(qos < this->qos_constr){
                 // 当满足 qos 限制时，每个客户记录自己可用的边缘节点
                 this->map_customer[cstm_name]->vec_usable_site_name.push_back(site_name);
-                // 边缘节点统计自身可用时在列表中出现的频数
-                this->map_site[site_name]->usable_fq += 1;
                 // 每个节点记录自己可支持的用户
                 this->map_site[site_name]->vec_usable_cstm_name.push_back(cstm_name);
+                // 边缘节点统计自身可用时在列表中出现的频数
+                this->map_site[site_name]->usable_fq += 1;
             }
         }
     }
@@ -128,7 +128,15 @@ void AllocMgr::solveAllDemands(const string &csv_demand){
     // 开始处理所有时刻的请求
     for(auto dm_sum : vec_idx_dm_sum){
         size_t idx = dm_sum.first;
-        final_slt.at(idx) = this->solveDemands(vec_dms.at(idx));
+        for(const auto &dm : vec_dms.at(idx)){
+            Customer* cstm = this->map_customer.at(dm.first);
+            cstm->total_bw = dm.second;
+            cstm->curr_bw = dm.second;
+        }
+        final_slt.at(idx) = this->solveDemands();
+        if(final_slt.at(idx).size() < 10){
+            cout << idx << endl;
+        }
         this->resetSite();
     } 
     
@@ -140,72 +148,74 @@ void AllocMgr::solveAllDemands(const string &csv_demand){
  * @brief 
  * 处理一条请求
  */
-Solutions AllocMgr::solveDemands(Demands &dms){
+Solutions AllocMgr::solveDemands(){
     // 该条请求的分配方案
     Solutions slts;
+    size_t idx = 0; // 计数专用
 
-    if(dms.empty()){
-        return slts;
-    }
-
-    // 拷贝一份当前请求状态
-    dms = preProDemands(dms);
-    unordered_map<string, int> curr_dms;
-    for(auto dm : dms){
-        curr_dms.emplace(dm);
-    }
-
+    // 记录一个site用于排序
+    vector<Site*> v_site(this->map_site.size());
     // 记录当前所有site状态
     vector<SiteState> vec_site_state(this->map_site.size());
-    // 随便记录一个site用于排序
-    vector<Site*> v_site(this->map_site.size());
-    size_t vss_idx = 0;
     for(auto site_pair : this->map_site){
-        vec_site_state[vss_idx] = site_pair.second->getState();
-        v_site[vss_idx] = site_pair.second;
-        ++vss_idx;
+        vec_site_state[idx] = site_pair.second->getState();
+        v_site[idx] = site_pair.second;
+        ++idx;
     }
 
-    // 以可支持的客户数从小到大排序
-    sort(v_site.begin(), v_site.end(), biggerUCSize);
+    idx = 0;
+    // 记录一个 customer 的序列用于排序
+    vector<Customer*> vec_cstm(this->map_customer.size());
+    for(auto cstm_pair : this->map_customer){
+        vec_cstm[idx] = cstm_pair.second;
+        ++idx;
+    }
+
+    // 以可支持的客户数排序
+    sort(v_site.begin(), v_site.end(), smallerUCSize);
 
     
     // 遍历当前拥有超频机会的节点
-    for(auto site : v_site){
+    for(Site* site : v_site){
         if(site->over_times > 0){
-            // 统计其可支持客户的所有需求
+            // 统计其可支持客户的所有需求, 并将其记录排序
+            idx = 0;
             int dm_bw_count = 0;
+            vector<Customer*> vec_usable_cstm(site->vec_usable_cstm_name.size());
             for(const string &c_name : site->vec_usable_cstm_name){
-                dm_bw_count += curr_dms[c_name];
+                Customer* cstm = this->map_customer.at(c_name);
+                vec_usable_cstm[idx] = cstm;
+                dm_bw_count += cstm->curr_bw;
+                ++idx;
             }
             // 若大于某个阈值，那么直接超频
             if(dm_bw_count >= site->total_bw){
                 site->is_over = true;
-                for(const string &c_name : site->vec_usable_cstm_name){
-                    if(site->rest_bw != 0 && curr_dms[c_name] != 0){
+                // 以当前余量最多排序
+                sort(vec_usable_cstm.begin(), vec_usable_cstm.end(), biggerCurrBwCstm);
+                sort(vec_usable_cstm.begin(), vec_usable_cstm.end(), smallerUSCstm);
+                for(auto cstm : vec_usable_cstm){
+                    if(site->rest_bw != 0 && cstm->curr_bw != 0){
                         int bw;
-                        if(site->rest_bw < curr_dms[c_name]){
+                        if(site->rest_bw < cstm->curr_bw){
                             bw = site->rest_bw;
                         }else{
-                            bw = curr_dms[c_name];
+                            bw = cstm->curr_bw;
                         }
                         site->allocBw(bw);
-                        curr_dms[c_name] -= bw;
-                        slts[c_name][site->name] += bw;
+                        cstm->allocBw(bw);
+                        slts[cstm->name][site->name] += bw;
                     }
                 }
             }
         }
     }
 
-    
-    Demands temp_dms;
-    for(auto &dm : curr_dms){
-        temp_dms.push_back(dm);
-    }
+    // 处理每个客户的请求前，对其进行排序（当前剩余平均需求）
+    sort(vec_cstm.begin(), vec_cstm.end(), biggerAvgCurrBwCstm);
 
     // 为了保证客户请求必然满足，回溯地去处理每个客户请求
-    if(!this->solveOneCstmDm(temp_dms, 0, slts)){
+    if(!this->solveOneCstmDm(vec_cstm, 0, slts)){
         // 要是分配失败，打印个log
         cout << "分配失败！！！" << endl;
     }
@@ -213,80 +223,35 @@ Solutions AllocMgr::solveDemands(Demands &dms){
     return slts;
 }
 
-/**
- * @brief 
- * 预处理请求
- */
-Demands AllocMgr::preProDemands(Demands &dms){
-    // 首先对客户需求排序
-    size_t dms_size = dms.size();
-    vector<pair<size_t, int>> vec_idx_pair(dms_size); // 将请求和原本请求的 idx 绑定成 pair 便于排序
-    Demands temp_dms; // 中间量
-
-    // 第一次排序，取需求这个量
-    temp_dms = dms;
-    for(size_t i = 0; i < dms_size; ++i){
-        int dm_bw = temp_dms[i].second;
-        // // 取平均需求
-        // pair<size_t, int> dm_pair = {i, dm_bw / this->map_customer.at(temp_dms[i].first)->vec_usable_site_name.size()};
-        // 取总需求
-        pair<size_t, int> dm_pair = {i, dm_bw};
-        vec_idx_pair[i] = dm_pair;
-    }
-
-    // 从大到小排序
-    sort(vec_idx_pair.begin(), vec_idx_pair.end(), biggerIdxInt);
-    for(size_t i = 0; i < dms_size; ++i){
-        dms[i] = temp_dms[vec_idx_pair[i].first];
-    }
-
-    // // 第二次排序， 取剩余可用的超频节点
-    // temp_dms = sorted_dms;
-    // for(size_t i = 0; i < dms_size; ++i){
-    //     int count = 0;
-    //     Customer* cstm = this->map_customer.at(temp_dms[i].first);
-    //     for(const string &s_name : cstm->vec_usable_site_name){
-    //         count += this->map_site.at(s_name)->over_times;
-    //     }
-    //     vec_idx_pair[i] = make_pair(i, count);
-    // }
-
-    // // 从大到小排序
-    // sort(vec_idx_pair.begin(), vec_idx_pair.end(), biggerIdxInt);
-    // for(size_t i = 0; i < dms_size; ++i){
-    //     sorted_dms[i] = dms[vec_idx_pair[i].first];
-    // }
-
-
-    return dms;
-}
-
-
 
 /**
  * @brief 
  * 回溯地去解决一整条请求，并给出相应分配方案
  */
-bool AllocMgr::solveOneCstmDm(const Demands &dms, const size_t dm_idx, Solutions &slts){
+bool AllocMgr::solveOneCstmDm(vector<Customer*> &vec_cstm, const size_t dm_idx, Solutions &slts){
     // 首先解析当前回溯的客户请求
-    pair<string, int> dm = dms[dm_idx];
-    string c_name = dm.first;
-    Customer* cstm = this->map_customer.at(c_name);
-    int total_dm_bw = dm.second;
-    double load_percent = 1; // 默认超频作业时满载额度
-    bool is_new_over = true;
-    if (dm_idx > dms.size() * 0.8){
-        is_new_over = false;
-    }
-
-
-    // 首先判断当前可用节点是否有充足裕量
+    size_t idx; // 计数专用
+    Customer* cstm = vec_cstm[dm_idx];
+    string c_name = cstm->name;
+    
+    // 获得非超频可用节点, 并获取总裕量，及总理想裕量
     int usable_bw = 0;
+    int usable_ideal_bw = 0;
+    vector<Site*> vec_uno_site;
     for(const auto &s_name : cstm->vec_usable_site_name){
-        usable_bw += this->map_site.at(s_name)->rest_bw;
+        Site* site = this->map_site.at(s_name);
+        if(!site->is_over){
+            vec_uno_site.push_back(site);
+            usable_bw += site->rest_bw;
+            int i_r_bw = site->ideal_bw - site->curr_bw;
+            if(i_r_bw > 0){
+                usable_ideal_bw += i_r_bw;
+            }
+        }   
     }
+
     // 没有充足裕量则返回上一层，进行重分配
-    if(usable_bw < total_dm_bw){
+    if(usable_bw < cstm->curr_bw){
         return false;
     }
 
@@ -299,10 +264,36 @@ bool AllocMgr::solveOneCstmDm(const Demands &dms, const size_t dm_idx, Solutions
 
     unordered_map<string, int> slt_per_cstm;
 
-    slt_per_cstm = this->reAllocCstmDm(total_dm_bw, cstm, load_percent, is_new_over);
+
+
+    // 考虑当前总理想裕量是否可以满足需求
+    idx = 0;
+    int update_bw = 300; // 理想负载增量
+    while(usable_ideal_bw < cstm->curr_bw){
+        Site* site = vec_uno_site.at(idx % vec_uno_site.size());
+        int add_bw = site->total_bw - site->ideal_bw;
+        add_bw = (add_bw < update_bw) ? add_bw : update_bw;
+        site->ideal_bw += add_bw;
+        usable_ideal_bw += add_bw;
+        ++idx;
+    }
+
+    // 开始分配
+    for(auto site : vec_uno_site){
+        int bw = site->ideal_bw - site->curr_bw;
+        bw = cstm->curr_bw > bw ? bw : cstm->curr_bw;
+        if(bw != 0){
+            site->allocBw(bw);
+            cstm->allocBw(bw);
+            slt_per_cstm[site->name] += bw;
+            if(cstm->curr_bw == 0){
+                break;
+            }
+        }
+    }
 
     // 最后一层则直接返回
-    if(dm_idx + 1 == dms.size()){
+    if(dm_idx + 1 == vec_cstm.size()){
         for(auto slt_pair : slt_per_cstm){
             slts[c_name][slt_pair.first] += slt_pair.second;
         }    
@@ -311,18 +302,9 @@ bool AllocMgr::solveOneCstmDm(const Demands &dms, const size_t dm_idx, Solutions
     }
 
     // 开始分配下一个客户
-    while(! this->solveOneCstmDm(dms, dm_idx + 1, slts)){
-        // cout << "================= ReAllocating dm_idx = " << dm_idx << " !!! ===============" << endl;
-        load_percent -= 0.05;
-        if(load_percent < 0.5){  // 本层最多迭代至超频负荷到达0.5
-            return false;
-        }
-        // 还原一下 map_site 的状态
-        for(auto s_state : vec_site_state){
-            this->map_site.at(s_state.name)->setState(s_state);
-        }
-        // 重分配
-        slt_per_cstm = this->reAllocCstmDm(total_dm_bw, cstm, load_percent, dm_idx);
+    while(! this->solveOneCstmDm(vec_cstm, dm_idx + 1, slts)){
+        // 暂时不考虑分配出问题的情况
+        return false;
     }
     // 下层分配成功，返回
     for(auto slt_pair : slt_per_cstm){
@@ -352,6 +334,7 @@ unordered_map<string, int> AllocMgr::reAllocCstmDm(int total_dm_bw, Customer* cs
         }
     }
     unordered_map<string, int> slt_per_cstm;
+
     // ============== 使用超频大法！！！ ==================
     if(curr_dm_bw != 0){
         this->overDemands(vec_is_over_site, vec_can_over_site, total_dm_bw,  curr_dm_bw, slt_per_cstm, load_percent);
