@@ -172,7 +172,7 @@ Solutions AllocMgr::solveDemands(){
     }
 
     // 以可支持的客户数排序
-    sort(v_site.begin(), v_site.end(), smallerUCSize);
+    sort(v_site.begin(), v_site.end(), smallerUCSite);
 
     
     // 遍历当前拥有超频机会的节点
@@ -269,12 +269,16 @@ bool AllocMgr::solveOneCstmDm(vector<Customer*> &vec_cstm, const size_t dm_idx, 
     // 考虑当前总理想裕量是否可以满足需求
     idx = 0;
     int update_bw = 300; // 理想负载增量
-    while(usable_ideal_bw < cstm->curr_bw){
+    // ******* Dangerous!不妨考虑让可支持客户更多的节点负担更多的负载，让其他节点接近于0
+    sort(vec_uno_site.begin(), vec_uno_site.end(), biggerUCSite);
+    int total_add_i_bw = cstm->curr_bw - usable_ideal_bw; // 当前理想裕量所需要增加的值
+    while(total_add_i_bw > 0){
         Site* site = vec_uno_site.at(idx % vec_uno_site.size());
-        int add_bw = site->total_bw - site->ideal_bw;
-        add_bw = (add_bw < update_bw) ? add_bw : update_bw;
-        site->ideal_bw += add_bw;
-        usable_ideal_bw += add_bw;
+        // 若当前节点的理想负载上限可以调高到所需增量，则直接给它调高
+        int add_i_bw = site->total_bw - site->ideal_bw;
+        add_i_bw = (total_add_i_bw < add_i_bw) ? total_add_i_bw : add_i_bw;
+        site->ideal_bw += add_i_bw;
+        total_add_i_bw -= add_i_bw;
         ++idx;
     }
 

@@ -62,10 +62,10 @@ bool biggerRestBw(const Site* a, const Site* b){
     return a->rest_bw > b->rest_bw;
 }
 
-bool biggerUCSize(const Site* a, const Site* b){
+bool biggerUCSite(const Site* a, const Site* b){
     return a->vec_usable_cstm_name.size() > b->vec_usable_cstm_name.size();
 }
 
-bool smallerUCSize(const Site* a, const Site* b){
+bool smallerUCSite(const Site* a, const Site* b){
     return a->vec_usable_cstm_name.size() < b->vec_usable_cstm_name.size();
 }

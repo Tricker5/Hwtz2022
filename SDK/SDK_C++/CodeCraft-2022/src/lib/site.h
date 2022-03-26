@@ -39,5 +39,5 @@ struct Site{
 
 
 bool biggerRestBw(const Site* a, const Site* b);
-bool biggerUCSize(const Site* a, const Site* b);
-bool smallerUCSize(const Site* a, const Site* b);
+bool biggerUCSite(const Site* a, const Site* b);
+bool smallerUCSite(const Site* a, const Site* b);
